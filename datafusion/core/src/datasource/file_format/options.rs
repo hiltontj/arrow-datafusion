@@ -226,6 +226,11 @@ impl<'a> Default for ParquetReadOptions<'a> {
 }
 
 impl<'a> ParquetReadOptions<'a> {
+    /// Create a new [`ParquetReadOptions`] using the default implementation
+    pub fn new() -> Self {
+        Self::default()
+    }
+
     /// Specify parquet_pruning
     pub fn parquet_pruning(mut self, parquet_pruning: bool) -> Self {
         self.parquet_pruning = Some(parquet_pruning);

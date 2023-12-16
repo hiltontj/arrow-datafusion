@@ -42,6 +42,9 @@ use std::path::Path;
 use std::sync::Arc;
 use tempfile::TempDir;
 
+/// Number of target partitions for the [`SessionContext`] used in testing
+const TARGET_PARTITIONS: usize = 4;
+
 /// Context for running tests
 pub struct TestContext {
     /// Context for running queries
@@ -66,7 +69,7 @@ impl TestContext {
     pub async fn try_new_for_test_file(relative_path: &Path) -> Option<Self> {
         let config = SessionConfig::new()
             // hardcode target partitions so plans are deterministic
-            .with_target_partitions(4);
+            .with_target_partitions(TARGET_PARTITIONS);
 
         let mut test_ctx = TestContext::new(SessionContext::new_with_config(config));
 
@@ -107,6 +110,18 @@ impl TestContext {
             "metadata.slt" => {
                 info!("Registering metadata table tables");
                 register_metadata_tables(test_ctx.session_ctx()).await;
+            }
+            "parquet.slt" => {
+                #[cfg(feature = "parquet")]
+                {
+                    info!("Registering partition parquet table");
+                    register_parquet_tables(&mut test_ctx).await;
+                }
+                #[cfg(not(feature = "parquet"))]
+                {
+                    info!("Skipping {file_name} because parquet feature is not enabled");
+                    return None;
+                }
             }
             _ => {
                 info!("Using default SessionContext");
@@ -165,6 +180,74 @@ pub async fn register_avro_tables(ctx: &mut crate::TestContext) {
         )
         .await
         .unwrap();
+}
+
+#[cfg(feature = "parquet")]
+/// Generate a partitioned Parquet file and register it with an execution context
+pub async fn register_parquet_tables(ctx: &mut crate::TestContext) {
+    use datafusion::prelude::{col, ParquetReadOptions};
+    ctx.enable_testdir();
+
+    let testdata = datafusion::test_util::parquet_test_data();
+    let alltypes_plain_file = format!("{testdata}/alltypes_plain.parquet");
+
+    let file_sort_order = [col("string_col"), col("int_col")]
+        .into_iter()
+        .map(|e| {
+            let ascending = true;
+            let nulls_first = false;
+            e.sort(ascending, nulls_first)
+        })
+        .collect::<Vec<_>>();
+
+    {
+        // Sorted Multi-File, where number of files is same as number of partitions
+        let table_path = ctx.testdir_path().join("parquet/multi");
+        std::fs::create_dir_all(&table_path)
+            .expect("failed to create parquet table path");
+        // Generate exactly TARGET_PARTITIONS files, this should result in sorting in the
+        // physical plan
+        for i in 0..TARGET_PARTITIONS {
+            std::fs::copy(
+                &alltypes_plain_file,
+                format!("{}/alltypes_plain{i}.parquet", table_path.display()),
+            )
+            .expect("copy parquet file");
+        }
+
+        ctx.session_ctx()
+            .register_parquet(
+                "alltypes_plain_multi_files",
+                table_path.display().to_string().as_str(),
+                ParquetReadOptions::new().file_sort_order(vec![file_sort_order.clone()]),
+            )
+            .await
+            .expect("register parquet on context")
+    }
+    {
+        // Sorted Multi-File, where number of files is same as number of partitions
+        let table_path = ctx.testdir_path().join("parquet/multi_no_sort");
+        std::fs::create_dir_all(&table_path)
+            .expect("failed to create parquet table path");
+        // Generate exactly TARGET_PARTITIONS + 1 files, this will not result in sorting in the
+        // physical plan
+        for i in 0..=TARGET_PARTITIONS {
+            std::fs::copy(
+                &alltypes_plain_file,
+                format!("{}/alltypes_plain{i}.parquet", table_path.display()),
+            )
+            .expect("copy parquet file");
+        }
+
+        ctx.session_ctx()
+            .register_parquet(
+                "alltypes_plain_multi_files_no_sort",
+                table_path.display().to_string().as_str(),
+                ParquetReadOptions::new().file_sort_order(vec![file_sort_order]),
+            )
+            .await
+            .expect("register parquet on context")
+    }
 }
 
 pub async fn register_scalar_tables(ctx: &SessionContext) {

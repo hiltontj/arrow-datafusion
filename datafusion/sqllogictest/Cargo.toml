@@ -55,6 +55,7 @@ tokio-postgres = { version = "0.7.7", optional = true }
 
 [features]
 avro = ["datafusion/avro"]
+parquet = ["datafusion/parquet"]
 postgres = ["bytes", "chrono", "tokio-postgres", "postgres-types", "postgres-protocol"]
 
 [dev-dependencies]
