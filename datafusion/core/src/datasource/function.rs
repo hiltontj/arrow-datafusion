@@ -25,7 +25,7 @@ use datafusion_expr::Expr;
 use std::sync::Arc;
 
 /// A trait for table function implementations
-pub trait TableFunctionImpl: Sync + Send {
+pub trait TableFunctionImpl: Sync + Send + 'static {
     /// Create a table provider
     fn call(&self, args: &[Expr]) -> Result<Arc<dyn TableProvider>>;
 }
